@@ -1,0 +1,1624 @@
+﻿using System;
+using System.Net;
+using System.Net.Http;
+using System.Threading.Tasks;
+using System.Web.Http;
+using System.Linq;
+using System.Collections.Generic;
+using System.Diagnostics;
+using System.Text.RegularExpressions;
+using Microsoft.Bot.Builder.Dialogs;
+using Microsoft.Bot.Connector;
+using KonaChatBot.DB;
+using KonaChatBot.Models;
+using Newtonsoft.Json.Linq;
+
+using System.Configuration;
+using System.Web.Configuration;
+using KonaChatBot.Dialogs;
+using System.IO;
+using System.Text;
+using Newtonsoft.Json;
+
+namespace KonaChatBot
+{
+    [BotAuthentication]
+    public class MessagesController : ApiController
+    {
+
+        public static readonly string TEXTDLG = "2";
+        public static readonly string CARDDLG = "3";
+        public static readonly string MEDIADLG = "4";
+        public static readonly int MAXFACEBOOKCARDS = 10;
+
+        public static Configuration rootWebConfig = WebConfigurationManager.OpenWebConfiguration("/KonaChatBot");
+        const string chatBotAppID = "appID";
+        public static int appID = Convert.ToInt32(rootWebConfig.ConnectionStrings.ConnectionStrings[chatBotAppID].ToString());
+
+        //config 변수 선언
+        static public string[] LUIS_NM = new string[10];        //루이스 이름
+        static public string[] LUIS_APP_ID = new string[10];    //루이스 app_id
+        static public string LUIS_SUBSCRIPTION = "";            //루이스 구독키
+        static public int LUIS_TIME_LIMIT;                      //루이스 타임 체크
+        static public string QUOTE = "";                        //견적 url
+        static public string TESTDRIVE = "";                    //시승 url
+        static public string BOT_ID = "";                       //bot id
+        static public string MicrosoftAppId = "";               //app id
+        static public string MicrosoftAppPassword = "";         //app password
+        static public string LUIS_SCORE_LIMIT = "";             //루이스 점수 체크
+        
+
+        public static int sorryMessageCnt = 0;
+        public static int chatBotID = 0;
+
+        public static int pagePerCardCnt = 10;
+        public static int pageRotationCnt = 0;
+        public static int fbLeftCardCnt = 0;
+        public static string FB_BEFORE_MENT = "";
+
+        public static List<RelationList> relationList = new List<RelationList>();
+        public static string luisId = "";
+        public static string luisIntent = "";
+        public static string luisEntities = "";
+        public static string queryStr = "";
+        public static DateTime startTime;
+
+        public static CacheList cacheList = new CacheList();
+        //페이스북 페이지용
+        public static ConversationHistory conversationhistory = new ConversationHistory();
+        //추천 컨텍스트 분석용
+        public static Dictionary<String, String> recommenddic = new Dictionary<string, String>();
+        //결과 플레그 H : 정상 답변, S : 기사검색 답변, D : 답변 실패
+        public static String replyresult = "";
+
+        public async Task<HttpResponseMessage> Post([FromBody]Activity activity)
+        {
+
+            string cashOrgMent = "";
+
+            DbConnect db = new DbConnect();
+            DButil dbutil = new DButil();
+            DButil.HistoryLog("db connect !! " );
+            //HttpResponseMessage response = Request.CreateResponse(HttpStatusCode.OK);
+            HttpResponseMessage response ;
+
+            if (activity.Type == ActivityTypes.ConversationUpdate && activity.MembersAdded.Any(m => m.Id == activity.Recipient.Id))
+            {
+                startTime = DateTime.Now;
+
+                //파라메터 호출
+                if (LUIS_NM.Count(s => s != null) > 0)
+                {
+                    //string[] LUIS_NM = new string[10];
+                    Array.Clear(LUIS_NM, 0, LUIS_NM.Length);
+                }
+
+                if (LUIS_APP_ID.Count(s => s != null) > 0)
+                {
+                    //string[] LUIS_APP_ID = new string[10];
+                    Array.Clear(LUIS_APP_ID, 0, LUIS_APP_ID.Length);
+                }
+                //Array.Clear(LUIS_APP_ID, 0, 10);
+                DButil.HistoryLog("db SelectConfig start !! ");
+                List<ConfList> confList = db.SelectConfig();
+                DButil.HistoryLog("db SelectConfig end!! ");
+
+                for (int i = 0; i < confList.Count; i++)
+                {
+                    switch (confList[i].cnfType)
+                    {
+                        case "LUIS_APP_ID":
+                            LUIS_APP_ID[LUIS_APP_ID.Count(s => s != null)] = confList[i].cnfValue;
+                            LUIS_NM[LUIS_NM.Count(s => s != null)] = confList[i].cnfNm;
+                            break;
+                        case "LUIS_SUBSCRIPTION":
+                            LUIS_SUBSCRIPTION = confList[i].cnfValue;
+                            break;
+                        case "BOT_ID":
+                            BOT_ID = confList[i].cnfValue;
+                            break;
+                        case "MicrosoftAppId":
+                            MicrosoftAppId = confList[i].cnfValue;
+                            break;
+                        case "MicrosoftAppPassword":
+                            MicrosoftAppPassword = confList[i].cnfValue;
+                            break;
+                        case "QUOTE":
+                            QUOTE = confList[i].cnfValue;
+                            break;
+                        case "TESTDRIVE":
+                            TESTDRIVE = confList[i].cnfValue;
+                            break;
+                        case "LUIS_SCORE_LIMIT":
+                            LUIS_SCORE_LIMIT = confList[i].cnfValue;
+                            break;
+                        case "LUIS_TIME_LIMIT":
+                            LUIS_TIME_LIMIT = Convert.ToInt32(confList[i].cnfValue);
+                            break;
+                        default: //미 정의 레코드
+                            Debug.WriteLine("*conf type : " + confList[i].cnfType + "* conf value : " + confList[i].cnfValue);
+                            DButil.HistoryLog("*conf type : " + confList[i].cnfType + "* conf value : " + confList[i].cnfValue);
+                            break;
+                    }
+                }
+
+                Debug.WriteLine("* DB conn : " + activity.Type);
+                DButil.HistoryLog("* DB conn : " + activity.Type);
+
+                //초기 다이얼로그 호출
+                List<DialogList> dlg = db.SelectInitDialog(activity.ChannelId);
+
+                ConnectorClient connector = new ConnectorClient(new Uri(activity.ServiceUrl));
+
+                foreach (DialogList dialogs in dlg)
+                {
+                    Activity initReply = activity.CreateReply();
+                    initReply.Recipient = activity.From;
+                    initReply.Type = "message";
+                    initReply.Attachments = new List<Attachment>();
+                    initReply.AttachmentLayout = AttachmentLayoutTypes.Carousel;
+
+                    Attachment tempAttachment;
+
+                    if (dialogs.dlgType.Equals(CARDDLG))
+                    {
+                        foreach (CardList tempcard in dialogs.dialogCard)
+                        {
+                            tempAttachment = dbutil.getAttachmentFromDialog(tempcard);
+                            initReply.Attachments.Add(tempAttachment);
+                        }
+                    }
+                    else
+                    {
+                        tempAttachment = dbutil.getAttachmentFromDialog(dialogs);
+                        initReply.Attachments.Add(tempAttachment);
+                    }
+                    await connector.Conversations.SendToConversationAsync(initReply);
+                }
+
+                DateTime endTime = DateTime.Now;
+                Debug.WriteLine("프로그램 수행시간 : {0}/ms", ((endTime - startTime).Milliseconds));
+                Debug.WriteLine("* activity.Type : " + activity.Type);
+                Debug.WriteLine("* activity.Recipient.Id : " + activity.Recipient.Id);
+                Debug.WriteLine("* activity.ServiceUrl : " + activity.ServiceUrl);
+
+                DButil.HistoryLog("* activity.Type : " + activity.ChannelData);
+                DButil.HistoryLog("* activity.Recipient.Id : " + activity.Recipient.Id);
+                DButil.HistoryLog("* activity.ServiceUrl : " + activity.ServiceUrl);
+            }
+            else if (activity.Type == ActivityTypes.Message)
+            {
+                Debug.WriteLine("* activity.Type == ActivityTypes.Message ");
+                string orgMent = activity.Text;
+                ConnectorClient connector = new ConnectorClient(new Uri(activity.ServiceUrl));
+
+                //대화 시작 시간
+                startTime = DateTime.Now;
+                long unixTime = ((DateTimeOffset)startTime).ToUnixTimeSeconds();
+
+                //await Conversation.SendAsync(activity, () => new TestDriveApi(orgMent));
+                //await Conversation.SendAsync(activity, () => new RecommendApiDialog());
+                //response = Request.CreateResponse(HttpStatusCode.OK);
+                //return response;
+
+                //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+                ////페이스북 위치 값 저장
+                //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+                //var facebooklocation = activity.Entities?.Where(t => t.Type == "Place").Select(t => t.GetAs<Place>()).FirstOrDefault();
+                //if (facebooklocation != null)
+                //{
+                //    try
+                //    {
+                //        var geo = (facebooklocation.Geo as JObject)?.ToObject<GeoCoordinates>();
+                //        if (geo != null)
+                //        {
+                //            DButil.HistoryLog("[activity.Text]2 ==>> activity.Text :: location [" + activity.Text + "]");
+                //            DButil.HistoryLog("[logic start] ==>> userID :: location [" + geo.Longitude + " " + geo.Latitude + "]");
+                //            orgMent = "current location:" + geo.Longitude + ":" + geo.Latitude;
+                //        }
+                //    }
+                //    catch (Exception ex)
+                //    {
+                //        Debug.WriteLine("ex : " + ex.ToString());
+                //        DButil.HistoryLog("[logic start] ==>> userID :: location error [" + activity.Conversation.Id + "]");
+                //    }
+                //}
+
+                //금칙어 체크
+                CardList bannedMsg = db.BannedChk(orgMent);
+                Debug.WriteLine("* bannedMsg : " + bannedMsg.cardText);//해당금칙어에 대한 답변
+
+                if (bannedMsg.cardText != null)
+                {
+                    Activity reply_ment = activity.CreateReply();
+                    reply_ment.Recipient = activity.From;
+                    reply_ment.Type = "message";
+                    reply_ment.Text = bannedMsg.cardText;
+
+                    var reply_ment_info = await connector.Conversations.SendToConversationAsync(reply_ment);
+                    response = Request.CreateResponse(HttpStatusCode.OK);
+                    return response;
+                }
+
+                queryStr = orgMent;
+                //인텐트 엔티티 검출
+                //캐시 체크
+                cashOrgMent = Regex.Replace(orgMent, @"[^a-zA-Z0-9ㄱ-힣]", "", RegexOptions.Singleline);
+                cacheList = db.CacheChk(cashOrgMent.Replace(" ", ""));                     // 캐시 체크
+
+
+                //캐시에 없을 경우
+                if (cacheList.luisIntent == null || cacheList.luisEntities == null)
+                {
+                    //루이스 호출전 TBL_WORD_CHG_DICT 테이블에서 전처리
+                    //for (int n = 0; n < Regex.Split(orgMent, " ").Length; n++)
+                    //{
+                    //    string chgMsg = db.SelectChgMsg(Regex.Split(orgMent, " ")[n]);
+                    //    if (!string.IsNullOrEmpty(chgMsg))
+                    //    {
+                    //        orgMent = orgMent.Replace(Regex.Split(orgMent, " ")[n], chgMsg);
+                    //    }
+                    //}
+
+                    //루이스 체크
+                   cacheList.luisId =  dbutil.GetMultiLUIS(orgMent);
+                }
+                luisId = cacheList.luisId;
+                luisIntent = cacheList.luisIntent;
+                luisEntities = cacheList.luisEntities;
+
+                //다이얼로그 호출
+                //await Conversation.SendAsync(activity, () => new RootDialog(cacheList.luisId, cacheList.luisIntent, cacheList.luisEntities).DefaultIfException());
+                //await Conversation.SendAsync(activity, () => new ExceptionHandlerDialog<object>(new RootDialog(cacheList.luisId, cacheList.luisIntent, cacheList.luisEntities), displayException: false));
+
+                String fullentity = db.SearchCommonEntities;
+
+                if (!string.IsNullOrEmpty(fullentity))
+                {
+                    if (!String.IsNullOrEmpty(luisEntities))
+                    {
+                        //entity 길이 비교
+                        if (fullentity.Length > luisEntities.Length || luisIntent.Equals(null) || luisIntent.Equals(""))
+                        {
+                            //DefineTypeChkSpare에서는 인텐트나 루이스아이디조건 없이 엔티티만 일치하면 다이얼로그 리턴
+                            relationList = db.DefineTypeChkSpare(fullentity);
+                        }
+                        else
+                        {
+                            relationList = db.DefineTypeChk(MessagesController.luisId, MessagesController.luisIntent, MessagesController.luisEntities);
+                        }
+                    }
+                    else
+                    {
+                        relationList = db.DefineTypeChkSpare(fullentity);
+                    }
+                }
+
+                //답변이 시승 rest api 호출인 경우
+                if ((relationList.Count > 0 && relationList[0].dlgApiDefine.Equals("api testdrive")) || (relationList.Count == 0 && (cacheList.luisIntent.Contains("TESTDRIVE") || cacheList.luisIntent.Contains("BRANCH"))))
+                {
+                    string replaceStr = "";
+                    //현재위치사용승인
+                    //var facebooklocation = activity.Entities?.Where(t => t.Type == "Place").Select(t => t.GetAs<Place>()).FirstOrDefault();
+                    //if (facebooklocation != null)
+                    //{
+                    //    try
+                    //    {
+                    //        var geo = (facebooklocation.Geo as JObject)?.ToObject<GeoCoordinates>();
+                    //        if (geo != null)
+                    //        {
+                    //            //HistoryLog("[activity.Text]2 ==>> activity.Text :: location [" + activity.Text + "]");
+                    //            //HistoryLog("[logic start] ==>> userID :: location [" + geo.Longitude + " " + geo.Latitude + "]");
+                    //            queryStr = "current location:" + geo.Longitude + ":" + geo.Latitude;
+                    //        }
+                    //    }
+                    //    catch (Exception ex)
+                    //    {
+                    //        Debug.WriteLine("ex : " + ex.ToString());
+                    //        //HistoryLog("[logic start] ==>> userID :: location error [" + activity.Conversation.Id + "]");
+                    //    }
+                    //}
+
+                    //if (queryStr.Contains("current location"))
+                    //{
+                    //    if (activity.ChannelId == "facebook" && facebooklocation == null)
+                    //    {
+                    //        //testDriveWhereStr = "test drive center region=seoul,current location=current location,query=Approve your current location";
+                    //        /////////////////////////////////////////////////////////////////////////////////
+                    //        //facebook location start
+                    //        /////////////////////////////////////////////////////////////////////////////////
+                    //        //HistoryLog("[location test] conversation id :: [" + activity.Conversation.Id + "] start");
+
+                    //        Activity reply_option = activity.CreateReply();
+
+                    //        reply_option.ChannelData = new FacebookMessage
+                    //        (
+                    //            text: "나와 함께 당신의 위치를 공유하십시오.",
+                    //            quickReplies: new List<FacebookQuickReply>
+                    //            {
+                    //                                // if content_type is location, title and payload are not used
+                    //                                // see https://developers.facebook.com/docs/messenger-platform/send-api-reference/quick-replies#fields
+                    //                                // for more information.
+                    //                                new FacebookQuickReply(
+                    //                                    contentType: FacebookQuickReply.ContentTypes.Location,
+                    //                                    title: default(string),
+                    //                                    payload: default(string)
+                    //                                )
+                    //            }
+                    //        );
+                    //        var reply_facebook = await connector.Conversations.SendToConversationAsync(reply_option);
+                    //        //response = Request.CreateResponse(HttpStatusCode.OK);
+                    //        //return response;
+                    //        /////////////////////////////////////////////////////////////////////////////////
+                    //        //facebook location end
+                    //        /////////////////////////////////////////////////////////////////////////////////
+                    //    }
+                    //    else
+                    //    {
+                    //        if (!queryStr.Contains(':'))
+                    //        {
+                    //            //첫번쨰 메세지 출력 x
+                    //            //response = Request.CreateResponse(HttpStatusCode.OK);
+                    //            //return response;
+                    //        }
+                    //        else
+                    //        {
+                    //            //위도경도에 따른 값 출력
+                    //            try
+                    //            {
+                    //                string regionStr = "";
+                    //                string location = queryStr;
+                    //                //테스트용
+                    //                //string location = "129.0929788:35.2686635";
+                    //                string[] location_result = location.Split(':');
+                    //                regionStr = db.LocationValue(location_result[1], location_result[2]);
+
+                    //                queryStr = regionStr + " 시승센터";
+                    //            }
+                    //            catch
+                    //            {
+                    //                queryStr = "서울 시승센터";
+                    //            }
+                    //        }
+                    //    }
+                    //}
+
+                    //엔티티 type, 엔티티 value 추출
+                    List<TestDriveList_API> SelectTestDriveList_API = db.SelectTestDriveList_API(queryStr);
+                    //다이얼로그 ID 추출
+                    List<TestDriveList_API_DLG> SelectTestDriveList_API_DLG = db.SelectTestDriveList_API_DLG(SelectTestDriveList_API[0].entityType);
+
+                    //paging start
+                    //String beforeMent = "";
+                    //int facebookpagecount = 1;
+                    //int fbLeftCardCnt = 0;
+
+                    //if (context.ConversationData.TryGetValue("commonBeforeQustion", out beforeMent))
+                    //{
+                    //    if (beforeMent.Equals(queryStr) && activity.ChannelId.Equals("facebook"))
+                    //    {
+                    //        if (context.ConversationData.TryGetValue("facebookPageCount", out facebookpagecount))
+                    //        {
+                    //            facebookpagecount++;
+                    //        }
+                    //        context.ConversationData.SetValue("facebookPageCount", facebookpagecount);
+                    //        fbLeftCardCnt++;
+                    //    }
+                    //}
+                    //paging end
+                    Activity testdriveReply = activity.CreateReply();
+                    testdriveReply.AttachmentLayout = AttachmentLayoutTypes.Carousel;
+
+                    for (int td = 0; td < SelectTestDriveList_API_DLG.Count; td++)
+                    {
+                        if (SelectTestDriveList_API_DLG[td].dlg_type.Equals(1))
+                        {
+                            Debug.WriteLine("GUBUN 1");
+                        }
+                        else if (SelectTestDriveList_API_DLG[td].dlg_type.Equals(2))
+                        {
+                            Debug.WriteLine("GUBUN 2");
+                            //텍스트 값 가져오기
+                            List<TestDriveList_API_DLG_TEXT> SelectTestDriveList_API_DLG_TEXT = db.SelectTestDriveList_API_DLG_TEXT(SelectTestDriveList_API_DLG[td].testdrive_dlg_id);
+                            //예외처리
+                            if (SelectTestDriveList_API_DLG_TEXT.Count != 0)
+                            {
+                                replaceStr = SelectTestDriveList_API_DLG_TEXT[0].testdrive_card_text;
+                            }
+                            else
+                            {
+                                replaceStr = "";
+                            }
+
+                        }
+                        else if (SelectTestDriveList_API_DLG[td].dlg_type.Equals(3))
+                        {
+                            Debug.WriteLine("GUBUN 3");
+                        }
+                        else
+                        {
+                            Debug.WriteLine("GUBUN 4");
+                            //미디어 값 가져오기
+                            List<TestDriveList_API_DLG_MEDIA> SelectTestDriveList_API_DLG_MEDIA = db.SelectTestDriveList_API_DLG_MEDIA(SelectTestDriveList_API_DLG[td].testdrive_dlg_id, SelectTestDriveList_API[0].entityValue);
+
+                            for (int i = 0; i < SelectTestDriveList_API_DLG_MEDIA.Count; i++)
+                            {
+                                //CardImage 입력
+                                CardImage cardImage = new CardImage()
+                                {
+                                    Url = SelectTestDriveList_API_DLG_MEDIA[i].media_url
+                                };
+
+                                //CardAction 입력
+                                List<CardAction> cardButtons = new List<CardAction>();
+
+                                if (SelectTestDriveList_API_DLG_MEDIA[i].btn_1_context.Length != 0)
+                                {
+                                    CardAction plButton = new CardAction()
+                                    {
+                                        Value = SelectTestDriveList_API_DLG_MEDIA[i].btn_1_context,
+                                        Type = SelectTestDriveList_API_DLG_MEDIA[i].btn_1_type,
+                                        Title = SelectTestDriveList_API_DLG_MEDIA[i].btn_1_title
+                                    };
+                                    cardButtons.Add(plButton);
+                                }
+
+                                if (SelectTestDriveList_API_DLG_MEDIA[i].btn_2_context.Length != 0)
+                                {
+                                    CardAction plButton = new CardAction()
+                                    {
+                                        Value = SelectTestDriveList_API_DLG_MEDIA[i].btn_2_context,
+                                        Type = SelectTestDriveList_API_DLG_MEDIA[i].btn_2_type,
+                                        Title = SelectTestDriveList_API_DLG_MEDIA[i].btn_2_title
+                                    };
+                                    cardButtons.Add(plButton);
+                                }
+
+                                if (SelectTestDriveList_API_DLG_MEDIA[i].btn_3_context.Length != 0)
+                                {
+                                    CardAction plButton = new CardAction()
+                                    {
+                                        Value = SelectTestDriveList_API_DLG_MEDIA[i].btn_3_context,
+                                        Type = SelectTestDriveList_API_DLG_MEDIA[i].btn_3_type,
+                                        Title = SelectTestDriveList_API_DLG_MEDIA[i].btn_3_title
+                                    };
+                                    cardButtons.Add(plButton);
+                                }
+
+                                //맵에서 text로 출력되는 주소값 치환
+                                if (!string.IsNullOrEmpty(replaceStr))
+                                {
+                                    testdriveReply.Text = replaceStr.Replace("CALL(지점 주소)", SelectTestDriveList_API_DLG_MEDIA[i].address);
+                                    await connector.Conversations.SendToConversationAsync(testdriveReply);
+                                    replaceStr = "";
+                                    testdriveReply.Text = "";
+                                }
+
+
+                                testdriveReply.Attachments.Add(DButil.GetHeroCard(SelectTestDriveList_API_DLG_MEDIA[i].card_title, SelectTestDriveList_API_DLG_MEDIA[i].card_subtitle, SelectTestDriveList_API_DLG_MEDIA[i].card_text, cardImage, cardButtons));
+                            }
+                            await connector.Conversations.SendToConversationAsync(testdriveReply);
+                            replyresult = "H";
+                            //reply 초기화
+                            testdriveReply.Attachments.Clear();
+                        }
+
+                    }
+                }
+                //답변이 가격 rest api 호출인 경우
+                else if ((relationList.Count > 0 && (relationList[0].dlgApiDefine.Equals("api quot")) || cacheList.luisIntent.Contains("quot")) || (relationList.Count == 0 && (relationList[0].dlgApiDefine.Equals("api quot")) || cacheList.luisIntent.Contains("quot")))
+				else if ((relationList[0].dlgApiDefine.Equals("api quot")) || (!cacheList.luisIntent.Equals(null) && cacheList.luisIntent.Contains("quot")))
+                {
+                    List<KeywordGroup> keywordgrouplist = db.SelectKeywordGroupList(MessagesController.cacheList.luisEntities.Split(','));
+                    List<Price_API_DLG> priceApiDlgList = new List<Price_API_DLG>();
+                    List<PriceMediaDlgList> priceMediaDlgList = new List<PriceMediaDlgList>();
+
+                    String entitlekeywordgroup = "", entitlekeyworddetail = "";
+
+                    Activity priceReply = activity.CreateReply();
+                    Activity priceTextReply = activity.CreateReply();
+                    priceTextReply.Recipient = activity.From;
+                    priceTextReply.Type = "message";
+
+                    priceReply.AttachmentLayout = AttachmentLayoutTypes.Carousel;
+
+                    foreach (KeywordGroup keyword in keywordgrouplist)
+                    {
+                        entitlekeywordgroup += keyword.keywordgroup + ",";
+                        entitlekeyworddetail += keyword.keyworddetail + "=" + keyword.keyword + ",";
+                    }
+                    entitlekeyworddetail = entitlekeyworddetail.Substring(0, entitlekeyworddetail.Length - 1);
+                    if (entitlekeywordgroup.Contains("TRIMWORD"))
+                    {
+
+                        if (entitlekeywordgroup.Contains("EXTERIORWORD"))
+                        {
+                            //entities "가솔린", "2WD", "가격", "트림","외장색상"
+                            Debug.WriteLine("TRIMWORD,EXTERIORWORD entitlekeyworddetail : " + entitlekeyworddetail);
+                            priceApiDlgList = db.SelectPriceList_API_DLG("TRIMWORD,EXTERIORWORD");
+
+                            for (int i = 0; i < priceApiDlgList.Count; i++)
+                            {
+
+                                Debug.WriteLine("[ " + i + " ] : " + priceApiDlgList[i].keywordGrp);
+                                Debug.WriteLine("[ " + i + " ] : " + priceApiDlgList[i].priceDlgId);
+                                Debug.WriteLine("[ " + i + " ] : " + priceApiDlgList[i].dlgType);
+
+
+                                if (priceApiDlgList[i].dlgType == "TEXT")
+                                {
+                                    string carModelNm = db.SelectPriceModelValue("TRIMWORD,INTERIORWORD", entitlekeyworddetail);
+                                    priceTextReply.Text = db.SelectPriceTextDlgList(priceApiDlgList[i].priceDlgId, carModelNm)[0].cardText;
+                                    await connector.Conversations.SendToConversationAsync(priceTextReply);
+
+                                }
+                                else if (priceApiDlgList[i].dlgType == "MEDIA")
+                                {
+                                    Debug.WriteLine("card dlg id = " + priceApiDlgList[i].priceDlgId);
+                                    Debug.WriteLine("entitlekeyworddetail = " + entitlekeyworddetail);
+                                    priceMediaDlgList = db.SelectPriceMediaDlgList(priceApiDlgList[i].priceDlgId, "TRIMWORD,EXTERIORWORD", entitlekeyworddetail);
+                                }
+
+                            }
+                        }
+                        else if (entitlekeywordgroup.Contains("INTERIORWORD"))
+                        {
+                            //entities "가솔린", "2WD", "가격", "트림","내장색상"
+                            Debug.WriteLine("TRIMWORD,INTERIORWORD entitlekeyworddetail : " + entitlekeyworddetail);
+                            priceApiDlgList = db.SelectPriceList_API_DLG("TRIMWORD,INTERIORWORD");
+
+                            for (int i = 0; i < priceApiDlgList.Count; i++)
+                            {
+
+                                Debug.WriteLine("[ " + i + " ] : " + priceApiDlgList[i].keywordGrp);
+                                Debug.WriteLine("[ " + i + " ] : " + priceApiDlgList[i].priceDlgId);
+                                Debug.WriteLine("[ " + i + " ] : " + priceApiDlgList[i].dlgType);
+
+
+                                if (priceApiDlgList[i].dlgType == "TEXT")
+                                {
+                                    string carModelNm = db.SelectPriceModelValue("TRIMWORD,INTERIORWORD", entitlekeyworddetail);
+                                    //db.SelectPriceTextDlgList(priceApiDlgList[i].priceDlgId)[0].cardText;
+
+                                    priceTextReply.Text = db.SelectPriceTextDlgList(priceApiDlgList[i].priceDlgId, carModelNm)[0].cardText;
+                                    await connector.Conversations.SendToConversationAsync(priceTextReply);
+                                }
+                                else if (priceApiDlgList[i].dlgType == "MEDIA")
+                                {
+                                    Debug.WriteLine("card dlg id = " + priceApiDlgList[i].priceDlgId);
+                                    priceMediaDlgList = db.SelectPriceMediaDlgList(priceApiDlgList[i].priceDlgId, "TRIMWORD,INTERIORWORD", entitlekeyworddetail);
+                                }
+
+                            }
+                        }
+                        else if (entitlekeywordgroup.Contains("OPTIONWORD"))
+                        {
+                            //entities "옵션"
+                            Debug.WriteLine("TRIMWORD,OPTIONWORD entitlekeyworddetail : " + entitlekeyworddetail);
+                            priceApiDlgList = db.SelectPriceList_API_DLG("TRIMWORD,OPTIONWORD");
+
+                            for (int i = 0; i < priceApiDlgList.Count; i++)
+                            {
+
+                                Debug.WriteLine("[ " + i + " ] : " + priceApiDlgList[i].keywordGrp);
+                                Debug.WriteLine("[ " + i + " ] : " + priceApiDlgList[i].priceDlgId);
+                                Debug.WriteLine("[ " + i + " ] : " + priceApiDlgList[i].dlgType);
+
+
+                                if (priceApiDlgList[i].dlgType == "TEXT")
+                                {
+                                    string carModelNm = db.SelectPriceModelValue("TRIMWORD,INTERIORWORD", entitlekeyworddetail);
+                                    priceTextReply.Text = db.SelectPriceTextDlgList(priceApiDlgList[i].priceDlgId, carModelNm)[0].cardText;
+                                    await connector.Conversations.SendToConversationAsync(priceTextReply);
+                                }
+                                else if (priceApiDlgList[i].dlgType == "MEDIA")
+                                {
+                                    Debug.WriteLine("card dlg id = " + priceApiDlgList[i].priceDlgId);
+                                    priceMediaDlgList = db.SelectPriceMediaDlgList(priceApiDlgList[i].priceDlgId, "TRIMWORD,OPTIONWORD", entitlekeyworddetail);
+                                }
+
+                            }
+                        }
+                        else
+                        {
+                            //entities "가솔린", "2WD", "가격", "트림"
+                            Debug.WriteLine("TRIMWORD entitlekeyworddetail : " + entitlekeyworddetail);
+                            priceApiDlgList = db.SelectPriceList_API_DLG("TRIMWORD");
+
+                            for (int i = 0; i < priceApiDlgList.Count; i++)
+                            {
+
+                                Debug.WriteLine("[ " + i + " ] : " + priceApiDlgList[i].keywordGrp);
+                                Debug.WriteLine("[ " + i + " ] : " + priceApiDlgList[i].priceDlgId);
+                                Debug.WriteLine("[ " + i + " ] : " + priceApiDlgList[i].dlgType);
+
+
+                                if (priceApiDlgList[i].dlgType == "TEXT")
+                                {
+                                    string carModelNm = db.SelectPriceModelValue("TRIMWORD,INTERIORWORD", entitlekeyworddetail);
+                                    priceTextReply.Text = db.SelectPriceTextDlgList(priceApiDlgList[i].priceDlgId, carModelNm)[0].cardText;
+                                    await connector.Conversations.SendToConversationAsync(priceTextReply);
+                                }
+                                else if (priceApiDlgList[i].dlgType == "MEDIA")
+                                {
+                                    Debug.WriteLine("card dlg id = " + priceApiDlgList[i].priceDlgId);
+                                    priceMediaDlgList = db.SelectPriceMediaDlgList(priceApiDlgList[i].priceDlgId, "TRIMWORD", entitlekeyworddetail);
+                                }
+
+                            }
+                        }
+                    }
+                    else if (entitlekeywordgroup.Contains("OPTIONWORD"))
+                    {
+                        //entities "옵션"
+                        Debug.WriteLine("OPTIONWORD entitlekeyworddetail : " + entitlekeyworddetail);
+                        priceApiDlgList = db.SelectPriceList_API_DLG("OPTIONWORD");
+
+                        for (int i = 0; i < priceApiDlgList.Count; i++)
+                        {
+
+                            Debug.WriteLine("[ " + i + " ] : " + priceApiDlgList[i].keywordGrp);
+                            Debug.WriteLine("[ " + i + " ] : " + priceApiDlgList[i].priceDlgId);
+                            Debug.WriteLine("[ " + i + " ] : " + priceApiDlgList[i].dlgType);
+
+
+                            if (priceApiDlgList[i].dlgType == "TEXT")
+                            {
+                                //db.SelectPriceTextDlgList(priceApiDlgList[i].priceDlgId)[0].cardText;
+                                priceTextReply.Text = db.SelectPriceTextDlgList(priceApiDlgList[i].priceDlgId, "")[0].cardText;
+                                await connector.Conversations.SendToConversationAsync(priceTextReply);
+                            }
+                            else if (priceApiDlgList[i].dlgType == "MEDIA")
+                            {
+                                Debug.WriteLine("card dlg id = " + priceApiDlgList[i].priceDlgId);
+                                priceMediaDlgList = db.SelectPriceMediaDlgList(priceApiDlgList[i].priceDlgId, "OPTIONWORD", entitlekeyworddetail);
+                            }
+
+                        }
+                    }
+                    else if (entitlekeywordgroup.Contains("OPTION"))
+                    {
+                        //entities "네비게이션"
+                        Debug.WriteLine("OPTION entitlekeyworddetail : " + entitlekeyworddetail);
+                        priceApiDlgList = db.SelectPriceList_API_DLG("OPTION");
+
+                        for (int i = 0; i < priceApiDlgList.Count; i++)
+                        {
+
+                            Debug.WriteLine("[ " + i + " ] : " + priceApiDlgList[i].keywordGrp);
+                            Debug.WriteLine("[ " + i + " ] : " + priceApiDlgList[i].priceDlgId);
+                            Debug.WriteLine("[ " + i + " ] : " + priceApiDlgList[i].dlgType);
+
+
+                            if (priceApiDlgList[i].dlgType == "TEXT")
+                            {
+                                //db.SelectPriceTextDlgList(priceApiDlgList[i].priceDlgId)[0].cardText;
+                                priceTextReply.Text = db.SelectPriceTextDlgList(priceApiDlgList[i].priceDlgId, "")[0].cardText;
+                                await connector.Conversations.SendToConversationAsync(priceTextReply);
+                            }
+                            else if (priceApiDlgList[i].dlgType == "MEDIA")
+                            {
+                                Debug.WriteLine("card dlg id = " + priceApiDlgList[i].priceDlgId);
+                                priceMediaDlgList = db.SelectPriceMediaDlgList(priceApiDlgList[i].priceDlgId, "OPTION", entitlekeyworddetail);
+                            }
+
+                        }
+                    }
+                    else if (entitlekeywordgroup.Contains("INTERIORWORD"))
+                    {
+                        //entities "가솔린", "2WD", "내장색상"
+                        Debug.WriteLine("INTERIORWORD entitlekeyworddetail : " + entitlekeyworddetail);
+                        priceApiDlgList = db.SelectPriceList_API_DLG("INTERIORWORD");
+
+                        for (int i = 0; i < priceApiDlgList.Count; i++)
+                        {
+
+                            Debug.WriteLine("[ " + i + " ] : " + priceApiDlgList[i].keywordGrp);
+                            Debug.WriteLine("[ " + i + " ] : " + priceApiDlgList[i].priceDlgId);
+                            Debug.WriteLine("[ " + i + " ] : " + priceApiDlgList[i].dlgType);
+
+
+                            if (priceApiDlgList[i].dlgType == "TEXT")
+                            {
+                                //db.SelectPriceTextDlgList(priceApiDlgList[i].priceDlgId)[0].cardText;
+                                priceTextReply.Text = db.SelectPriceTextDlgList(priceApiDlgList[i].priceDlgId, "")[0].cardText;
+                                await connector.Conversations.SendToConversationAsync(priceTextReply);
+                            }
+                            else if (priceApiDlgList[i].dlgType == "MEDIA")
+                            {
+                                Debug.WriteLine("card dlg id = " + priceApiDlgList[i].priceDlgId);
+                                if (entitlekeyworddetail != "INTERIORCOLOR=내장색상")
+                                {
+                                    priceMediaDlgList = db.SelectPriceMediaDlgList(priceApiDlgList[i].priceDlgId, "INTERIORWORD", entitlekeyworddetail);
+                                }
+                                else
+                                {
+                                    priceMediaDlgList = db.SelectPriceMediaDlgList(16, "INTERIORWORD", entitlekeyworddetail);
+                                }
+
+                            }
+
+                        }
+                    }
+                    else if (entitlekeywordgroup.Contains("EXTERIORWORD"))
+                    {
+                        //entities "가솔린", "2WD", "외장색상"
+                        Debug.WriteLine("EXTERIORWORD entitlekeyworddetail : " + entitlekeyworddetail);
+                        priceApiDlgList = db.SelectPriceList_API_DLG("EXTERIORWORD");
+
+                        for (int i = 0; i < priceApiDlgList.Count; i++)
+                        {
+
+                            Debug.WriteLine("[ " + i + " ] : " + priceApiDlgList[i].keywordGrp);
+                            Debug.WriteLine("[ " + i + " ] : " + priceApiDlgList[i].priceDlgId);
+                            Debug.WriteLine("[ " + i + " ] : " + priceApiDlgList[i].dlgType);
+
+
+                            if (priceApiDlgList[i].dlgType == "TEXT")
+                            {
+                                //db.SelectPriceTextDlgList(priceApiDlgList[i].priceDlgId)[0].cardText;
+                                priceTextReply.Text = db.SelectPriceTextDlgList(priceApiDlgList[i].priceDlgId, "")[0].cardText;
+                                await connector.Conversations.SendToConversationAsync(priceTextReply);
+                            }
+                            else if (priceApiDlgList[i].dlgType == "MEDIA")
+                            {
+                                Debug.WriteLine("card dlg id = " + priceApiDlgList[i].priceDlgId);
+                                if (entitlekeyworddetail != "EXTERIORCOLOR=외장색상")
+                                {
+                                    priceMediaDlgList = db.SelectPriceMediaDlgList(priceApiDlgList[i].priceDlgId, "EXTERIORWORD", entitlekeyworddetail);
+                                }
+                                else
+                                {
+                                    priceMediaDlgList = db.SelectPriceMediaDlgList(11, "EXTERIORWORD", entitlekeyworddetail);
+                                }
+
+                            }
+
+                        }
+                    }
+                    else if (entitlekeywordgroup.Contains("INTERIOR"))
+                    {
+                        //entities "가솔린", "2WD", "오랜지"
+                        Debug.WriteLine("INTERIOR entitlekeyworddetail : " + entitlekeyworddetail);
+                        priceApiDlgList = db.SelectPriceList_API_DLG("INTERIOR");
+
+                        for (int i = 0; i < priceApiDlgList.Count; i++)
+                        {
+
+                            Debug.WriteLine("[ " + i + " ] : " + priceApiDlgList[i].keywordGrp);
+                            Debug.WriteLine("[ " + i + " ] : " + priceApiDlgList[i].priceDlgId);
+                            Debug.WriteLine("[ " + i + " ] : " + priceApiDlgList[i].dlgType);
+
+
+                            if (priceApiDlgList[i].dlgType == "TEXT")
+                            {
+                                //db.SelectPriceTextDlgList(priceApiDlgList[i].priceDlgId)[0].cardText;
+                                priceTextReply.Text = db.SelectPriceTextDlgList(priceApiDlgList[i].priceDlgId, "")[0].cardText;
+                                await connector.Conversations.SendToConversationAsync(priceTextReply);
+                            }
+                            else if (priceApiDlgList[i].dlgType == "MEDIA")
+                            {
+                                Debug.WriteLine("card dlg id = " + priceApiDlgList[i].priceDlgId);
+                                priceMediaDlgList = db.SelectPriceMediaDlgList(priceApiDlgList[i].priceDlgId, "INTERIOR", entitlekeyworddetail);
+                            }
+
+                        }
+                    }
+                    else if (entitlekeywordgroup.Contains("EXTERIOR"))
+                    {
+                        //entities "가솔린", "2WD", "다크나이트"
+                        Debug.WriteLine("EXTERIOR entitlekeyworddetail : " + entitlekeyworddetail);
+                        priceApiDlgList = db.SelectPriceList_API_DLG("EXTERIOR");
+
+                        for (int i = 0; i < priceApiDlgList.Count; i++)
+                        {
+
+                            Debug.WriteLine("[ " + i + " ] : " + priceApiDlgList[i].keywordGrp);
+                            Debug.WriteLine("[ " + i + " ] : " + priceApiDlgList[i].priceDlgId);
+                            Debug.WriteLine("[ " + i + " ] : " + priceApiDlgList[i].dlgType);
+
+
+                            if (priceApiDlgList[i].dlgType == "TEXT")
+                            {
+                                //db.SelectPriceTextDlgList(priceApiDlgList[i].priceDlgId)[0].cardText;
+                                priceTextReply.Text = db.SelectPriceTextDlgList(priceApiDlgList[i].priceDlgId, "")[0].cardText;
+                                await connector.Conversations.SendToConversationAsync(priceTextReply);
+                            }
+                            else if (priceApiDlgList[i].dlgType == "MEDIA")
+                            {
+                                Debug.WriteLine("card dlg id = " + priceApiDlgList[i].priceDlgId);
+                                priceMediaDlgList = db.SelectPriceMediaDlgList(priceApiDlgList[i].priceDlgId, "EXTERIOR", entitlekeyworddetail);
+                            }
+
+                        }
+                    }
+                    else if (entitlekeywordgroup.Contains("TRIM"))
+                    {
+                        //entities "가솔린", "2WD"
+                        Debug.WriteLine("TRIM entitlekeyworddetail : " + entitlekeyworddetail);
+                        priceApiDlgList = db.SelectPriceList_API_DLG("TRIM");
+
+                        for (int i = 0; i < priceApiDlgList.Count; i++)
+                        {
+
+                            Debug.WriteLine("[ " + i + " ] : " + priceApiDlgList[i].keywordGrp);
+                            Debug.WriteLine("[ " + i + " ] : " + priceApiDlgList[i].priceDlgId);
+                            Debug.WriteLine("[ " + i + " ] : " + priceApiDlgList[i].dlgType);
+
+
+                            if (priceApiDlgList[i].dlgType == "TEXT")
+                            {
+                                //db.SelectPriceTextDlgList(priceApiDlgList[i].priceDlgId)[0].cardText;
+                                priceTextReply.Text = db.SelectPriceTextDlgList(priceApiDlgList[i].priceDlgId, "")[0].cardText;
+                                await connector.Conversations.SendToConversationAsync(priceTextReply);
+                            }
+                            else if (priceApiDlgList[i].dlgType == "MEDIA")
+                            {
+                                Debug.WriteLine("card dlg id = " + priceApiDlgList[i].priceDlgId);
+                                priceMediaDlgList = db.SelectPriceMediaDlgList(priceApiDlgList[i].priceDlgId, "TRIM", entitlekeyworddetail);
+
+                            }
+
+                        }
+                    }
+                    else if (entitlekeywordgroup.Contains("SHORTCUT"))
+                    {
+                        //entities "견적", "바로가기"
+                        Debug.WriteLine("SHORTCUT entitlekeyworddetail : " + entitlekeyworddetail);
+                        priceApiDlgList = db.SelectPriceList_API_DLG("SHORTCUT");
+
+                        for (int i = 0; i < priceApiDlgList.Count; i++)
+                        {
+
+                            Debug.WriteLine("[ " + i + " ] : " + priceApiDlgList[i].keywordGrp);
+                            Debug.WriteLine("[ " + i + " ] : " + priceApiDlgList[i].priceDlgId);
+                            Debug.WriteLine("[ " + i + " ] : " + priceApiDlgList[i].dlgType);
+
+
+                            if (priceApiDlgList[i].dlgType == "TEXT")
+                            {
+                                //db.SelectPriceTextDlgList(priceApiDlgList[i].priceDlgId)[0].cardText;
+                                priceTextReply.Text = db.SelectPriceTextDlgList(priceApiDlgList[i].priceDlgId, "")[0].cardText;
+                                await connector.Conversations.SendToConversationAsync(priceTextReply);
+                            }
+                            else if (priceApiDlgList[i].dlgType == "MEDIA")
+                            {
+                                Debug.WriteLine("card dlg id = " + priceApiDlgList[i].priceDlgId);
+                                priceMediaDlgList = db.SelectPriceMediaDlgList(priceApiDlgList[i].priceDlgId, "SHORTCUT", "");
+                            }
+
+                        }
+                    }
+                    else if (entitlekeywordgroup.Contains("PRICEWORD"))
+                    {
+                        //entities "가격"
+                        Debug.WriteLine("PRICEWORD entitlekeyworddetail : " + entitlekeyworddetail);
+
+
+                        List<PriceModelList> priceModelList = db.SelectPriceModelList();
+
+                        priceApiDlgList = db.SelectPriceList_API_DLG("PRICEWORD");
+
+                        for (int i = 0; i < priceApiDlgList.Count; i++)
+                        {
+
+                            Debug.WriteLine("[ " + i + " ] : " + priceApiDlgList[i].keywordGrp);
+                            Debug.WriteLine("[ " + i + " ] : " + priceApiDlgList[i].priceDlgId);
+                            Debug.WriteLine("[ " + i + " ] : " + priceApiDlgList[i].dlgType);
+
+
+                            if (priceApiDlgList[i].dlgType == "TEXT")
+                            {
+                                //db.SelectPriceTextDlgList(priceApiDlgList[i].priceDlgId)[0].cardText;
+                                priceTextReply.Text = db.SelectPriceTextDlgList(priceApiDlgList[i].priceDlgId, "")[0].cardText;
+                                await connector.Conversations.SendToConversationAsync(priceTextReply);
+                            }
+                            else if (priceApiDlgList[i].dlgType == "MEDIA")
+                            {
+                                Debug.WriteLine("card dlg id = " + priceApiDlgList[i].priceDlgId);
+                                Debug.WriteLine("card dlg id = " + entitlekeyworddetail);
+                                Debug.WriteLine("card dlg id = " + entitlekeywordgroup);
+                                priceMediaDlgList = db.SelectPriceMediaDlgList(priceApiDlgList[i].priceDlgId, "PRICEWORD", "");
+                            }
+
+                        }
+                        //returndialog = "가격이 궁금하시군요";
+                    }
+                    else
+                    {
+                        Debug.WriteLine("keyword group error : " + entitlekeywordgroup);
+                        //entities "가격"
+                        Debug.WriteLine("PRICEWORD entitlekeyworddetail : " + entitlekeyworddetail);
+
+
+                        List<PriceModelList> priceModelList = db.SelectPriceModelList();
+
+                        priceApiDlgList = db.SelectPriceList_API_DLG("PRICEWORD");
+
+                        for (int i = 0; i < priceApiDlgList.Count; i++)
+                        {
+
+                            Debug.WriteLine("[ " + i + " ] : " + priceApiDlgList[i].keywordGrp);
+                            Debug.WriteLine("[ " + i + " ] : " + priceApiDlgList[i].priceDlgId);
+                            Debug.WriteLine("[ " + i + " ] : " + priceApiDlgList[i].dlgType);
+
+
+                            if (priceApiDlgList[i].dlgType == "TEXT")
+                            {
+                                //db.SelectPriceTextDlgList(priceApiDlgList[i].priceDlgId)[0].cardText;
+                                priceTextReply.Text = db.SelectPriceTextDlgList(priceApiDlgList[i].priceDlgId, "")[0].cardText;
+                                await connector.Conversations.SendToConversationAsync(priceTextReply);
+                            }
+                            else if (priceApiDlgList[i].dlgType == "MEDIA")
+                            {
+                                Debug.WriteLine("card dlg id = " + priceApiDlgList[i].priceDlgId);
+                                Debug.WriteLine("card dlg id = " + entitlekeyworddetail);
+                                Debug.WriteLine("card dlg id = " + entitlekeywordgroup);
+                                priceMediaDlgList = db.SelectPriceMediaDlgList(priceApiDlgList[i].priceDlgId, "PRICEWORD", "");
+                            }
+
+                        }
+
+                        //DateTime endTime = DateTime.Now;
+                        //Debug.WriteLine("프로그램 수행시간 : {0}/ms", ((endTime - MessagesController.startTime).Milliseconds));
+                        //Debug.WriteLine("* activity.Type : " + activity.Type);
+                        //Debug.WriteLine("* activity.Recipient.Id : " + activity.Recipient.Id);
+                        //Debug.WriteLine("* activity.ServiceUrl : " + activity.ServiceUrl);
+                        ////var message = await result;
+                        //int dbResult = db.insertUserQuery(Regex.Replace(MessagesController.queryStr, @"[^a-zA-Z0-9ㄱ-힣]", "", RegexOptions.Singleline), "", "", "0", "", 'D', 0);
+                        //Debug.WriteLine("INSERT QUERY RESULT : " + dbResult.ToString());
+
+                        //if (db.insertHistory(activity.Conversation.Id, MessagesController.queryStr, "ERROR", activity.ChannelId, ((endTime - MessagesController.startTime).Milliseconds), 0) > 0)
+                        //{
+                        //    Debug.WriteLine("HISTORY RESULT SUCCESS");
+                        //    //HistoryLog("HISTORY RESULT SUCCESS");
+                        //}
+                        //else
+                        //{
+                        //    Debug.WriteLine("HISTORY RESULT SUCCESS");
+                        //    //HistoryLog("HISTORY RESULT FAIL");
+                        //}
+
+                    }
+
+                    if (priceMediaDlgList.Count > 0)
+                    {
+                        string cardDiv = "";
+                        string cardVal = "";
+                        CardImage cardImage;
+                        for (int i = 0; i < priceMediaDlgList.Count; i++)
+                        {
+                            Translator imgNmTranslateInfo = new Translator();
+                            if (priceMediaDlgList[0].groupNm == "TRIMWORD,EXTERIORWORD" || priceMediaDlgList[0].groupNm == "TRIMWORD,INTERIORWORD" || priceMediaDlgList[0].groupNm == "TRIMWORD,OPTIONWORD")//|| priceMediaDlgList[0].groupNm == "OPTION" || priceMediaDlgList[0].groupNm == "EXTERIOR" || priceMediaDlgList[0].groupNm == "INTERIOR")
+                            {
+                                imgNmTranslateInfo = await DButil.getTranslate(priceMediaDlgList[i].cardTitle);
+                            }
+                            else if (priceMediaDlgList[0].groupNm == "OPTIONWORD" || priceMediaDlgList[0].groupNm == "OPTION" || priceMediaDlgList[0].groupNm == "EXTERIOR" || priceMediaDlgList[0].groupNm == "INTERIOR")
+                            {
+                                imgNmTranslateInfo = await DButil.getTranslate(priceMediaDlgList[i].cardTitle);
+                            }
+                            else if (priceMediaDlgList[0].groupNm == "PRICEWORD")
+                            {
+                                imgNmTranslateInfo = await DButil.getTranslate(priceMediaDlgList[i].engine);
+                            }
+                            else if ((priceMediaDlgList[0].groupNm == "EXTERIORWORD" && priceMediaDlgList[0].entityDetail == "EXTERIORCOLOR=외장색상") || (priceMediaDlgList[0].groupNm == "INTERIORWORD" && priceMediaDlgList[0].entityDetail == "INTERIORCOLOR=내장색상"))
+                            {
+                                imgNmTranslateInfo = await DButil.getTranslate(priceMediaDlgList[i].cardTitle);
+                            }
+                            else
+                            {
+                                string trimNm = "";
+                                if (!string.IsNullOrEmpty(priceMediaDlgList[i].trim))
+                                {
+
+                                    if (priceMediaDlgList[i].trim.Contains(";"))
+                                    {
+                                        trimNm = priceMediaDlgList[i].trim.Split(';')[0].ToString();
+                                    }
+                                    else
+                                    {
+                                        trimNm = priceMediaDlgList[i].trim;
+                                    }
+                                }
+                                else
+                                {
+                                    trimNm = "";
+                                }
+                                imgNmTranslateInfo = await DButil.getTranslate(trimNm);
+                            }
+
+
+                            if (priceMediaDlgList[0].groupNm == "TRIMWORD,OPTIONWORD" || priceMediaDlgList[0].groupNm == "OPTION" || priceMediaDlgList[0].groupNm == "OPTIONWORD")
+                            {
+                                cardImage = new CardImage()
+                                {
+                                    Url = priceMediaDlgList[i].mediaUrl.Replace("CALL(IMAGE_URL)", imgNmTranslateInfo.data.translations[0].translatedText.Replace(" ", "_"))
+                                };
+                            }
+                            else if (priceMediaDlgList[0].groupNm == "EXTERIORWORD" && priceMediaDlgList[0].entityDetail == "EXTERIORCOLOR=외장색상")
+                            {
+                                cardImage = new CardImage()
+                                {
+                                    Url = priceMediaDlgList[i].mediaUrl.Replace("CALL(IMAGE_URL)", imgNmTranslateInfo.data.translations[0].translatedText.Replace(" ", "").Replace("DarkKnight", "DarkNight"))
+                                };
+                            }
+                            else if (priceMediaDlgList[0].groupNm == "INTERIORWORD" && priceMediaDlgList[0].entityDetail == "INTERIORCOLOR=내장색상")
+                            {
+                                cardImage = new CardImage()
+                                {
+                                    Url = priceMediaDlgList[i].mediaUrl.Replace("CALL(IMAGE_URL)", imgNmTranslateInfo.data.translations[0].translatedText.Replace(" ", "").Replace("AcidYellow", "Acid Yellow"))
+                                };
+                            }
+                            else
+                            {
+                                cardImage = new CardImage()
+                                {
+                                    Url = priceMediaDlgList[i].mediaUrl.Replace("CALL(IMAGE_URL)", imgNmTranslateInfo.data.translations[0].translatedText.Replace(" ", "").Replace("DarkKnight", "DarkNight").Replace("AcidYellow", "Acid Yellow"))
+                                };
+                            }
+
+
+                            //CardAction 입력
+                            List<CardAction> cardButtons = new List<CardAction>();
+
+                            if (priceMediaDlgList[i].btn1Type.Length != 0)
+                            {
+                                CardAction plButton = new CardAction()
+                                {
+                                    Value = priceMediaDlgList[i].btn1Context,
+                                    Type = priceMediaDlgList[i].btn1Type,
+                                    Title = priceMediaDlgList[i].btn1Title
+                                };
+                                cardButtons.Add(plButton);
+                            }
+
+                            if (priceMediaDlgList[i].btn2Type.Length != 0)
+                            {
+                                CardAction plButton = new CardAction()
+                                {
+                                    Value = priceMediaDlgList[i].btn2Context,
+                                    Type = priceMediaDlgList[i].btn2Type,
+                                    Title = priceMediaDlgList[i].btn2Title
+                                };
+                                cardButtons.Add(plButton);
+                            }
+
+                            if (priceMediaDlgList[i].btn3Type.Length != 0)
+                            {
+                                CardAction plButton = new CardAction()
+                                {
+                                    Value = priceMediaDlgList[i].btn3Context,
+                                    Type = priceMediaDlgList[i].btn3Type,
+                                    Title = priceMediaDlgList[i].btn3Title
+                                };
+                                cardButtons.Add(plButton);
+                            }
+                            if (priceMediaDlgList[i].btn4Type.Length != 0)
+                            {
+                                CardAction plButton = new CardAction()
+                                {
+                                    Value = priceMediaDlgList[i].btn4Context,
+                                    Type = priceMediaDlgList[i].btn4Type,
+                                    Title = priceMediaDlgList[i].btn4Title
+                                };
+                                cardButtons.Add(plButton);
+                            }
+
+                            if (priceMediaDlgList[i].cardDivision.Length != 0)
+                            {
+                                cardDiv = priceMediaDlgList[i].cardDivision;
+                            }
+
+                            if (priceMediaDlgList[i].cardValue.Length != 0)
+                            {
+                                cardVal = priceMediaDlgList[i].cardValue.Replace("CALL(IMAGE_URL)", imgNmTranslateInfo.data.translations[0].translatedText.Replace(" ", " ").Replace("DarkKnight", "DarkNight")).ToLower();
+                            }
+
+
+                            ////맵에서 text로 출력되는 주소값 치환
+                            //if (!string.IsNullOrEmpty(replaceStr))
+                            //{
+                            //    reply.Text = replaceStr.Replace("CALL(지점 주소)", SelectTestDriveList_API_DLG_MEDIA[i].address);
+                            //    await context.PostAsync(reply);
+                            //    replaceStr = "";
+                            //    reply.Text = "";
+                            //}
+
+
+                            priceReply.Attachments.Add(dbutil.GetHeroCard(priceMediaDlgList[i].cardTitle, priceMediaDlgList[i].cardSubTitle, priceMediaDlgList[i].cardText, cardImage, cardButtons, cardDiv, cardVal));
+                        }
+                        await connector.Conversations.SendToConversationAsync(priceReply);
+                        replyresult = "H";
+                        //response = Request.CreateResponse(HttpStatusCode.OK);
+                        //DateTime endTime = DateTime.Now;
+                        //Debug.WriteLine("프로그램 수행시간 : {0}/ms", ((endTime - MessagesController.startTime).Milliseconds));
+                        //Debug.WriteLine("* activity.Type : " + context.Activity.Type);
+                        //Debug.WriteLine("* activity.Recipient.Id : " + context.Activity.Recipient.Id);
+                        //Debug.WriteLine("* activity.ServiceUrl : " + context.Activity.ServiceUrl);
+                        ////var message = await result;
+                        //int dbResult = db.insertUserQuery(Regex.Replace(MessagesController.queryStr, @"[^a-zA-Z0-9ㄱ-힣]", "", RegexOptions.Singleline), MessagesController.cacheList.luisIntent, MessagesController.cacheList.luisEntities, "0", MessagesController.cacheList.luisId, 'H', 0);
+                        //Debug.WriteLine("INSERT QUERY RESULT : " + dbResult.ToString());
+
+                        //if (db.insertHistory(context.Activity.Conversation.Id, MessagesController.queryStr, MessagesController.cacheList.dlgId.ToString(), context.Activity.ChannelId, ((endTime - MessagesController.startTime).Milliseconds), 0) > 0)
+                        //{
+                        //    Debug.WriteLine("HISTORY RESULT SUCCESS");
+                        //    //HistoryLog("HISTORY RESULT SUCCESS");
+                        //}
+                        //else
+                        //{
+                        //    Debug.WriteLine("HISTORY RESULT FAIL");
+                        //    //HistoryLog("HISTORY RESULT FAIL");
+                        //}
+                    }
+                }
+                //답변이 추천 rest api 호출인 경우 or 인텐트 파악은 추천으로 했으나 relation 테이블에 등록이 안되어 있는 경우
+                else if (relationList[0].dlgApiDefine.Equals("api recommend") || (luisIntent.Contains("recommend ")))
+                {
+                    Activity recommendReply = activity.CreateReply();
+                    
+                    List<RecommendConfirm> rc = db.SelectedRecommendConfirm;
+
+                    foreach (RecommendConfirm temprc in rc)
+                    {
+                        if (!temprc.KEYWORDGROUP.Equals(""))
+                        {
+
+                            if (temprc.KEYWORD.Equals("기타"))
+                            {
+                                if (String.IsNullOrEmpty(recommenddic[RecommendContextConstants.Use].value))
+                                {
+                                    temprc.KEYWORDGROUP = RecommendContextConstants.Use;
+                                }
+                                else if (String.IsNullOrEmpty(recommenddic[RecommendContextConstants.Important].value))
+                                {
+                                    temprc.KEYWORDGROUP = RecommendContextConstants.Important;
+                                }
+                                else if (String.IsNullOrEmpty(recommenddic[RecommendContextConstants.Gender].value))
+                                {
+                                    temprc.KEYWORDGROUP = RecommendContextConstants.Gender;
+                                }
+                            }
+                        }
+                        if (!temprc.KEYWORD.Equals("기타 용도"))
+                        {
+                            DictionaryModel tempdic = new DictionaryModel();
+                            tempdic.value = temprc.KEYWORD;
+                            recommenddic.Add(temprc.KEYWORDGROUP, tempdic);
+                        }
+                    }
+
+                    if (String.IsNullOrEmpty(recommenddic[RecommendContextConstants.Use].value))
+                    {
+                        //await context.PostAsync($"use 요청");
+                        recommendReply.Attachments.Add(dbutil.getRecommendDialog(1));
+                    }
+                    else if (String.IsNullOrEmpty(recommenddic[RecommendContextConstants.Important].value))
+                    {
+                        //await context.PostAsync($"important 요청");
+                        recommendReply.Attachments.Add(dbutil.getRecommendDialog(2));
+                    }
+                    else if (String.IsNullOrEmpty(recommenddic[RecommendContextConstants.Gender].value))
+                    {
+                        //await context.PostAsync($"age gender 요청");
+                        recommendReply.Attachments.Add(dbutil.getRecommendDialog(3));
+                    }
+                    else
+                    {
+                        recommendReply.Attachments.Add(dbutil.getRecommendDialog(4));
+                        //recommend context 초기화
+                        recommenddic.Clear();
+                    }
+                    await connector.Conversations.SendToConversationAsync(recommendReply);
+                    replyresult = "H";
+                }
+                //답변이 일반 답변인 경우
+                else if (MessagesController.relationList[0].dlgApiDefine.Equals("D"))
+                {
+                    //context.Call(new CommonDialog("", MessagesController.queryStr), this.ResumeAfterOptionDialog);
+                    String beforeMent = "";
+                    int facebookpagecount = 1;
+                    int fbLeftCardCnt = 0;
+
+                    if (!String.IsNullOrEmpty(conversationhistory.commonBeforeQustion))
+                    {
+                        if (beforeMent.Equals(orgMent) && activity.ChannelId.Equals("facebook"))
+                        {
+                            if (conversationhistory.facebookPageCount > 0)
+                            {
+                                facebookpagecount++;
+                            }
+                            conversationhistory.facebookPageCount = 0;
+                            fbLeftCardCnt++;
+                        }
+                    }
+
+
+                    Activity commonReply = activity.CreateReply();
+                    commonReply.AttachmentLayout = AttachmentLayoutTypes.Carousel;
+
+
+                    for (int m = 0; m < MessagesController.relationList.Count; m++)
+                    {
+                        DialogList dlg = db.SelectDialog(MessagesController.relationList[m].dlgId);
+
+                        Attachment tempAttachment = new Attachment();
+
+                        if (dlg.dlgType.Equals(CARDDLG))
+                        {
+                            foreach (CardList tempcard in dlg.dialogCard)
+                            {
+                                if (conversationhistory.facebookPageCount > 0)
+                                {
+                                    if (Int32.Parse(tempcard.card_order_no) > (MAXFACEBOOKCARDS * facebookpagecount) && Int32.Parse(tempcard.card_order_no) <= (MAXFACEBOOKCARDS * (facebookpagecount + 1)))
+                                    {
+                                        tempAttachment = dbutil.getAttachmentFromDialog(tempcard);
+                                    }
+                                    else if (Int32.Parse(tempcard.card_order_no) > (MAXFACEBOOKCARDS * (facebookpagecount + 1)))
+                                    {
+                                        fbLeftCardCnt++;
+                                    }
+                                }
+                                else if (activity.ChannelId.Equals("facebook"))
+                                {
+                                    if (Int32.Parse(tempcard.card_order_no) <= MAXFACEBOOKCARDS)
+                                    {
+                                        tempAttachment = dbutil.getAttachmentFromDialog(tempcard);
+                                    }
+                                    else
+                                    {
+                                        fbLeftCardCnt++;
+                                    }
+                                }
+                                else
+                                {
+                                    tempAttachment = dbutil.getAttachmentFromDialog(tempcard);
+                                }
+                                commonReply.Attachments.Add(tempAttachment);
+                            }
+                        }
+                        else
+                        {
+                            tempAttachment = dbutil.getAttachmentFromDialog(dlg);
+                            commonReply.Attachments.Add(tempAttachment);
+                        }
+                        await connector.Conversations.SendToConversationAsync(commonReply);
+                        commonReply.Attachments.Clear();
+
+
+                        ////페이스북에서 남은 카드가 있는경우
+                        //if (beforeMent.Equals(orgMent) && channel.Equals("facebook") && fbLeftCardCnt > 0)
+                        //{
+                        //    reply.Attachments.Add(
+                        //        GetHeroCard(
+                        //        "", "",
+                        //        fbLeftCardCnt + "개의 컨테츠가 더 있습니다.",
+                        //        //new CardAction(ActionTypes.ImBack, "더 보기", value: userData.GetProperty<string>("FB_BEFORE_MENT")))
+                        //        new CardAction(ActionTypes.ImBack, "더 보기", value: beforeMent))
+                        //    );
+                        //    await context.PostAsync(reply);
+                        //    reply.Attachments.Clear();
+                        //}
+                    }
+                    
+                    conversationhistory.commonBeforeQustion = orgMent;
+                    replyresult = "H";
+                }
+                //relation 값이 없을 경우 -> 네이버 기사 검색
+                else
+                {
+                    string newUserID = activity.Conversation.Id;
+                    string beforeUserID = "";
+                    string beforeMessgaeText = "";
+                    string messgaeText = "";
+
+                    Activity intentNoneReply = activity.CreateReply();
+                    Boolean sorryflag = false;
+
+
+                    if (beforeUserID != newUserID)
+                    {
+                        beforeUserID = newUserID;
+                        MessagesController.sorryMessageCnt = 0;
+                    }
+
+                    var message = MessagesController.queryStr;
+                    beforeMessgaeText = message.ToString();
+                    if (message.ToString().Contains("코나") == true)
+                    {
+                        messgaeText = message.ToString();
+                        if (messgaeText.Contains("현대자동차") != true || messgaeText.Contains("현대 자동차") != true)
+                        {
+                            messgaeText = "현대자동차 " + messgaeText;
+                        }
+                    }
+                    else
+                    {
+                        messgaeText = "코나 " + message.ToString();
+                        if (messgaeText.Contains("현대자동차") != true || messgaeText.Contains("현대 자동차") != true)
+                        {
+                            messgaeText = "현대자동차 " + messgaeText;
+                        }
+                    }
+
+                    if (messgaeText.Contains("코나") == true && (messgaeText.Contains("현대자동차") == true || messgaeText.Contains("현대 자동차") == true))
+                    {
+                        
+                        Debug.WriteLine("SERARCH MESSAGE : " + messgaeText);
+                        if ((messgaeText != null) && messgaeText.Trim().Length > 0)
+                        {
+                            //Naver Search API
+
+                            string url = "https://openapi.naver.com/v1/search/news.json?query=" + messgaeText + "&display=10&start=1&sort=sim"; //news JSON result 
+                            //string blogUrl = "https://openapi.naver.com/v1/search/blog.json?query=" + messgaeText + "&display=10&start=1&sort=sim"; //search JSON result 
+                            //string cafeUrl = "https://openapi.naver.com/v1/search/cafearticle.json?query=" + messgaeText + "&display=10&start=1&sort=sim"; //cafe JSON result 
+                            //string url = "https://openapi.naver.com/v1/search/blog.xml?query=" + query; //blog XML result
+                            HttpWebRequest request = (HttpWebRequest)WebRequest.Create(url);
+                            request.Headers.Add("X-Naver-Client-Id", "Y536Z1ZMNv93Oej6TrkF");
+                            request.Headers.Add("X-Naver-Client-Secret", "cPHOFK6JYY");
+                            HttpWebResponse httpwebresponse = (HttpWebResponse)request.GetResponse();
+                            string status = httpwebresponse.StatusCode.ToString();
+                            if (status == "OK")
+                            {
+                                Stream stream = httpwebresponse.GetResponseStream();
+                                StreamReader reader = new StreamReader(stream, Encoding.UTF8);
+                                string text = reader.ReadToEnd();
+
+                                RootObject serarchList = JsonConvert.DeserializeObject<RootObject>(text);
+
+                                Debug.WriteLine("serarchList : " + serarchList);
+                                //description
+
+                                if (serarchList.display == 1)
+                                {
+                                    Debug.WriteLine("SERARCH : " + Regex.Replace(serarchList.items[0].title, @"[^<:-:>-<b>-</b>]", "", RegexOptions.Singleline));
+
+                                    if (serarchList.items[0].title.Contains("코나"))
+                                    {
+                                        //Only One item
+                                        List<CardImage> cardImages = new List<CardImage>();
+                                        CardImage img = new CardImage();
+                                        img.Url = "";
+                                        cardImages.Add(img);
+
+                                        string searchTitle = "";
+                                        string searchText = "";
+
+                                        searchTitle = serarchList.items[0].title;
+                                        searchText = serarchList.items[0].description;
+
+
+
+                                        if (activity.ChannelId == "facebook")
+                                        {
+                                            searchTitle = Regex.Replace(searchTitle, @"[<][a-z|A-Z|/](.|)*?[>]", "", RegexOptions.Singleline).Replace("\n", "").Replace("<:", "").Replace(":>", "");
+                                            searchText = Regex.Replace(searchText, @"[<][a-z|A-Z|/](.|)*?[>]", "", RegexOptions.Singleline).Replace("\n", "").Replace("<:", "").Replace(":>", "");
+                                        }
+
+
+                                        LinkHeroCard card = new LinkHeroCard()
+                                        {
+                                            Title = searchTitle,
+                                            Subtitle = null,
+                                            Text = searchText,
+                                            Images = cardImages,
+                                            Buttons = null,
+                                            Link = Regex.Replace(serarchList.items[0].link, "amp;", "")
+                                        };
+                                        var attachment = card.ToAttachment();
+
+                                        intentNoneReply.Attachments = new List<Attachment>();
+                                        intentNoneReply.Attachments.Add(attachment);
+                                    }
+                                }
+                                else
+                                {
+                                    intentNoneReply.AttachmentLayout = AttachmentLayoutTypes.Carousel;
+                                    intentNoneReply.Attachments = new List<Attachment>();
+                                    for (int i = 0; i < serarchList.display; i++)
+                                    {
+                                        string searchTitle = "";
+                                        string searchText = "";
+
+                                        searchTitle = serarchList.items[i].title;
+                                        searchText = serarchList.items[i].description;
+
+                                        if (activity.ChannelId == "facebook")
+                                        {
+                                            searchTitle = Regex.Replace(searchTitle, @"[<][a-z|A-Z|/](.|)*?[>]", "", RegexOptions.Singleline).Replace("\n", "").Replace("<:", "").Replace(":>", "");
+                                            searchText = Regex.Replace(searchText, @"[<][a-z|A-Z|/](.|)*?[>]", "", RegexOptions.Singleline).Replace("\n", "").Replace("<:", "").Replace(":>", "");
+                                        }
+
+                                        if (serarchList.items[i].title.Contains("코나"))
+                                        {
+                                            List<CardImage> cardImages = new List<CardImage>();
+                                            CardImage img = new CardImage();
+                                            img.Url = "";
+                                            cardImages.Add(img);
+
+                                            List<CardAction> cardButtons = new List<CardAction>();
+                                            CardAction[] plButton = new CardAction[1];
+                                            plButton[0] = new CardAction()
+                                            {
+                                                Value = Regex.Replace(serarchList.items[i].link, "amp;", ""),
+                                                Type = "openUrl",
+                                                Title = "기사 바로가기"
+                                            };
+                                            cardButtons = new List<CardAction>(plButton);
+
+                                            if (activity.ChannelId == "facebook")
+                                            {
+                                                LinkHeroCard card = new LinkHeroCard()
+                                                {
+                                                    Title = searchTitle,
+                                                    Subtitle = null,
+                                                    Text = searchText,
+                                                    Images = cardImages,
+                                                    Buttons = cardButtons,
+                                                    Link = null
+                                                };
+                                                var attachment = card.ToAttachment();
+                                                intentNoneReply.Attachments.Add(attachment);
+                                            }
+                                            else
+                                            {
+                                                LinkHeroCard card = new LinkHeroCard()
+                                                {
+                                                    Title = searchTitle,
+                                                    Subtitle = null,
+                                                    Text = searchText,
+                                                    Images = cardImages,
+                                                    Buttons = null,
+                                                    Link = Regex.Replace(serarchList.items[i].link, "amp;", "")
+                                                };
+                                                var attachment = card.ToAttachment();
+                                                intentNoneReply.Attachments.Add(attachment);
+                                            }
+                                        }
+                                    }
+                                }
+                                await connector.Conversations.SendToConversationAsync(intentNoneReply);
+                                replyresult = "S";
+
+
+                                if (intentNoneReply.Attachments.Count == 0)
+                                {
+                                    sorryflag = true;
+                                }
+                                else
+                                {
+
+                                    //orgKRMent = Regex.Replace(message.ToString(), @"[^a-zA-Z0-9ㄱ-힣]", "", RegexOptions.Singleline);
+
+
+                                    //for (int n = 0; n < Regex.Split(message.ToString(), " ").Length; n++)
+                                    //{
+                                    //    string chgMsg = db.SelectChgMsg(Regex.Split(message.ToString(), " ")[n]);
+                                    //    if (!string.IsNullOrEmpty(chgMsg))
+                                    //    {
+                                    //        message = message.ToString().Replace(Regex.Split(message.ToString(), " ")[n], chgMsg);
+                                    //    }
+                                    //}
+
+
+                                    //Translator translateInfo = await getTranslate(message.ToString());
+
+                                    //orgENGMent = Regex.Replace(translateInfo.data.translations[0].translatedText, @"[^a-zA-Z0-9ㄱ-힣-\s-&#39;]", "", RegexOptions.Singleline);
+
+                                    //orgENGMent = orgENGMent.Replace("&#39;", "'");
+
+                                    ////int dbResult = db.insertUserQuery(orgKRMent, orgENGMent, "", "", "", 1, 'S', "", "", "", "SEARCH", MessagesController.userData.GetProperty<int>("appID"));
+                                    //int dbResult = db.insertUserQuery(orgKRMent, "", "", "", "", 'S', MessagesController.chatBotID);
+                                    //Debug.WriteLine("INSERT QUERY RESULT : " + dbResult.ToString());
+
+                                    //DateTime endTime = DateTime.Now;
+
+                                    //Debug.WriteLine("USER NUMBER : " + context.Activity.Conversation.Id);
+                                    //Debug.WriteLine("CUSTOMMER COMMENT KOREAN : " + messgaeText.Replace("코나 ", ""));
+                                    //Debug.WriteLine("CUSTOMMER COMMENT ENGLISH : " + translateInfo.data.translations[0].translatedText.Replace("&#39;", "'"));
+                                    //Debug.WriteLine("CHANNEL_ID : " + context.Activity.ChannelId);
+                                    //Debug.WriteLine("프로그램 수행시간 : {0}/ms", ((endTime - startTime).Milliseconds));
+
+                                    ////int inserResult = db.insertHistory(context.Activity.Conversation.Id, messgaeText.Replace("코나 ", ""), translateInfo.data.translations[0].translatedText.Replace("&#39;", "'"), "SEARCH", context.Activity.ChannelId, ((endTime - startTime).Milliseconds), MessagesController.userData.GetProperty<int>("appID"));
+                                    //int inserResult = db.insertHistory(context.Activity.Conversation.Id, messgaeText, "SEARCH", context.Activity.ChannelId, ((endTime - startTime).Milliseconds), MessagesController.chatBotID);
+                                    //if (inserResult > 0)
+                                    //{
+                                    //    Debug.WriteLine("HISTORY RESULT SUCCESS");
+                                    //}
+                                    //else
+                                    //{
+                                    //    Debug.WriteLine("HISTORY RESULT FAIL");
+                                    //}
+                                    //HistoryLog("[ SEARCH ] ==>> userID :: [ " + context.Activity.Conversation.Id + " ]       message :: [ " + messgaeText.Replace("코나 ", "") + " ]       date :: [ " + DateTime.Now + " ]");
+                                }
+
+                            }
+                            else
+                            {
+                                //System.Diagnostics.Debug.WriteLine("Error 발생=" + status);
+                                sorryflag = true;
+                            }
+                        }
+                    }
+                    else
+                    {
+                        sorryflag = true;
+                    }
+                    if (sorryflag)
+                    {
+                        int sorryMessageCheck = db.SelectUserQueryErrorMessageCheck(activity.Conversation.Id, MessagesController.chatBotID);
+
+                        ++MessagesController.sorryMessageCnt;
+
+                        Activity sorryReply = activity.CreateReply();
+
+                        sorryReply.Recipient = activity.From;
+                        sorryReply.Type = "message";
+                        sorryReply.Attachments = new List<Attachment>();
+                        sorryReply.AttachmentLayout = AttachmentLayoutTypes.Carousel;
+
+                        List<TextList> text = new List<TextList>();
+                        if (sorryMessageCheck == 0)
+                        {
+                            text = db.SelectSorryDialogText("5");
+                        }
+                        else
+                        {
+                            text = db.SelectSorryDialogText("6");
+                        }
+
+                        for (int i = 0; i < text.Count; i++)
+                        {
+                            HeroCard plCard = new HeroCard()
+                            {
+                                Title = text[i].cardTitle,
+                                Text = text[i].cardText
+                            };
+
+                            Attachment plAttachment = plCard.ToAttachment();
+                            sorryReply.Attachments.Add(plAttachment);
+                        }
+
+                        await connector.Conversations.SendToConversationAsync(sorryReply);
+                        sorryflag = false;
+                        replyresult = "D";
+                    }
+                }
+
+                DateTime endTime = DateTime.Now;
+                //analysis table insert
+                int dbResult = db.insertUserQuery();
+                //history table insert
+                db.insertHistory(activity.Conversation.Id, activity.ChannelId, ((endTime - MessagesController.startTime).Milliseconds));
+                replyresult = "";
+            }
+            else
+            {
+                HandleSystemMessage(activity);
+            }
+            response = Request.CreateResponse(HttpStatusCode.OK);
+            return response;
+
+        }
+
+        private Activity HandleSystemMessage(Activity message)
+        {
+            if (message.Type == ActivityTypes.DeleteUserData)
+            {
+            }
+            else if (message.Type == ActivityTypes.ConversationUpdate)
+            {
+            }
+            else if (message.Type == ActivityTypes.ContactRelationUpdate)
+            {
+            }
+            else if (message.Type == ActivityTypes.Typing)
+            {
+            }
+            else if (message.Type == ActivityTypes.Ping)
+            {
+            }
+            return null;
+        }
+    }
+}
