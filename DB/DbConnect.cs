@@ -65,7 +65,7 @@ namespace JuiceChatBot.DB
                 cmd.CommandText += " 	DLG_TYPE,               ";
                 cmd.CommandText += " 	DLG_GROUP,              ";
                 cmd.CommandText += " 	DLG_ORDER_NO            ";
-                cmd.CommandText += " FROM TBL_ANIMATION_DLG     ";
+                cmd.CommandText += " FROM TBL_DLG     ";
                 cmd.CommandText += " WHERE DLG_GROUP = '1'      ";
                 cmd.CommandText += " AND USE_YN = 'Y'           ";
                 cmd.CommandText += " ORDER BY DLG_ID            ";
