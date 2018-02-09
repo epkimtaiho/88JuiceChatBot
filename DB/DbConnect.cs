@@ -90,7 +90,7 @@ namespace JuiceChatBot.DB
                         SqlDataReader rdr2 = null;
                         if (dlg.dlgType.Equals(TEXTDLG))
                         {
-                            cmd2.CommandText = "SELECT CARD_TITLE, CARD_TEXT FROM TBL_ANIMATION_DLG_TEXT WHERE DLG_ID = @dlgID AND USE_YN = 'Y'";
+                            cmd2.CommandText = "SELECT CARD_TITLE, CARD_TEXT FROM TBL_DLG_TEXT WHERE DLG_ID = @dlgID AND USE_YN = 'Y'";
                             cmd2.Parameters.AddWithValue("@dlgID", dlg.dlgId);
                             rdr2 = cmd2.ExecuteReader(CommandBehavior.CloseConnection);
 
@@ -105,7 +105,7 @@ namespace JuiceChatBot.DB
                             cmd2.CommandText = "SELECT CARD_TITLE, CARD_SUBTITLE, CARD_TEXT, IMG_URL," +
                                     "BTN_1_TYPE, BTN_1_TITLE, BTN_1_CONTEXT, BTN_2_TYPE, BTN_2_TITLE, BTN_2_CONTEXT, BTN_3_TYPE, BTN_3_TITLE, BTN_3_CONTEXT, BTN_4_TYPE, BTN_4_TITLE, BTN_4_CONTEXT, " +
                                     "CARD_DIVISION, CARD_VALUE " +
-                                    "FROM TBL_ANIMATION_DLG_CARD WHERE DLG_ID = @dlgID AND USE_YN = 'Y' ";
+                                    "FROM TBL_DLG_CARD WHERE DLG_ID = @dlgID AND USE_YN = 'Y' ";
                             //if (channel.Equals("facebook"))
                             //{
                             //    cmd2.CommandText += "FB_USE_YN = 'Y' ";
@@ -142,7 +142,7 @@ namespace JuiceChatBot.DB
                         {
                             cmd2.CommandText = "SELECT CARD_TITLE, CARD_TEXT, MEDIA_URL," +
                                     "BTN_1_TYPE, BTN_1_TITLE, BTN_1_CONTEXT, BTN_2_TYPE, BTN_2_TITLE, BTN_2_CONTEXT, BTN_3_TYPE, BTN_3_TITLE, BTN_3_CONTEXT, BTN_4_TYPE, BTN_4_TITLE, BTN_4_CONTEXT " +
-                                    "FROM TBL_ANIMATION_DLG_MEDIA WHERE DLG_ID = @dlgID AND USE_YN = 'Y'";
+                                    "FROM TBL_DLG_MEDIA WHERE DLG_ID = @dlgID AND USE_YN = 'Y'";
                             cmd2.Parameters.AddWithValue("@dlgID", dlg.dlgId);
                             rdr2 = cmd2.ExecuteReader(CommandBehavior.CloseConnection);
 
@@ -193,7 +193,7 @@ namespace JuiceChatBot.DB
                 cmd.CommandText += " 	DLG_TYPE,               ";
                 cmd.CommandText += " 	DLG_ORDER_NO,           ";
                 cmd.CommandText += " 	DLG_GROUP               ";
-                cmd.CommandText += " FROM TBL_ANIMATION_DLG               ";
+                cmd.CommandText += " FROM TBL_DLG               ";
                 cmd.CommandText += " WHERE DLG_ID = @dlgId      ";
                 cmd.CommandText += " AND USE_YN = 'Y'           ";
                 cmd.CommandText += " ORDER BY  DLG_ORDER_NO     ";
@@ -216,7 +216,7 @@ namespace JuiceChatBot.DB
                         SqlDataReader rdr2 = null;
                         if (dlg.dlgType.Equals(TEXTDLG))
                         {
-                            cmd2.CommandText = "SELECT CARD_TITLE, CARD_TEXT FROM TBL_ANIMATION_DLG_TEXT WHERE DLG_ID = @dlgID AND USE_YN = 'Y'";
+                            cmd2.CommandText = "SELECT CARD_TITLE, CARD_TEXT FROM TBL_DLG_TEXT WHERE DLG_ID = @dlgID AND USE_YN = 'Y'";
                             cmd2.Parameters.AddWithValue("@dlgID", dlg.dlgId);
                             rdr2 = cmd2.ExecuteReader(CommandBehavior.CloseConnection);
 
@@ -232,7 +232,7 @@ namespace JuiceChatBot.DB
                             cmd2.CommandText = "SELECT CARD_TITLE, CARD_SUBTITLE, CARD_TEXT, IMG_URL," +
                                     "BTN_1_TYPE, BTN_1_TITLE, BTN_1_CONTEXT, BTN_2_TYPE, BTN_2_TITLE, BTN_2_CONTEXT, BTN_3_TYPE, BTN_3_TITLE, BTN_3_CONTEXT, BTN_4_TYPE, BTN_4_TITLE, BTN_4_CONTEXT, " +
                                     "CARD_DIVISION, CARD_VALUE, CARD_ORDER_NO " +
-                                    "FROM TBL_ANIMATION_DLG_CARD WHERE DLG_ID = @dlgID AND USE_YN = 'Y' ORDER BY CARD_ORDER_NO";
+                                    "FROM TBL_DLG_CARD WHERE DLG_ID = @dlgID AND USE_YN = 'Y' ORDER BY CARD_ORDER_NO";
                             cmd2.Parameters.AddWithValue("@dlgID", dlg.dlgId);
                             rdr2 = cmd2.ExecuteReader(CommandBehavior.CloseConnection);
                             List<CardList> dialogCards = new List<CardList>();
@@ -268,7 +268,7 @@ namespace JuiceChatBot.DB
                         {
                             cmd2.CommandText = "SELECT CARD_TITLE, CARD_TEXT, MEDIA_URL," +
                                     "BTN_1_TYPE, BTN_1_TITLE, BTN_1_CONTEXT, BTN_2_TYPE, BTN_2_TITLE, BTN_2_CONTEXT, BTN_3_TYPE, BTN_3_TITLE, BTN_3_CONTEXT, BTN_4_TYPE, BTN_4_TITLE, BTN_4_CONTEXT , CARD_DIVISION, CARD_VALUE " +
-                                    "FROM TBL_ANIMATION_DLG_MEDIA WHERE DLG_ID = @dlgID AND USE_YN = 'Y'";
+                                    "FROM TBL_DLG_MEDIA WHERE DLG_ID = @dlgID AND USE_YN = 'Y'";
                             cmd2.Parameters.AddWithValue("@dlgID", dlg.dlgId);
                             rdr2 = cmd2.ExecuteReader(CommandBehavior.CloseConnection);
 
@@ -313,7 +313,7 @@ namespace JuiceChatBot.DB
                 cmd.CommandText = "SELECT CARD_DLG_ID, DLG_ID, CARD_TITLE, CARD_SUBTITLE, CARD_TEXT, IMG_URL," +
                     "BTN_1_TYPE, BTN_1_TITLE, BTN_1_CONTEXT, BTN_2_TYPE, BTN_2_TITLE, BTN_2_CONTEXT, BTN_3_TYPE, BTN_3_TITLE, BTN_3_CONTEXT, " +
                     "CARD_DIVISION, CARD_VALUE " +
-                    "FROM TBL_ANIMATION_DLG_CARD WHERE DLG_ID = @dlgID AND USE_YN = 'Y' AND DLG_ID > 999 ORDER BY CARD_ORDER_NO";
+                    "FROM TBL_DLG_CARD WHERE DLG_ID = @dlgID AND USE_YN = 'Y' AND DLG_ID > 999 ORDER BY CARD_ORDER_NO";
                     //"FROM TBL_SECCS_DLG_CARD WHERE DLG_ID = @dlgID AND USE_YN = 'Y' AND DLG_ID > 999 ORDER BY CARD_ORDER_NO";
 
                 cmd.Parameters.AddWithValue("@dlgID", dlgID);
@@ -374,7 +374,7 @@ namespace JuiceChatBot.DB
                 conn.Open();
                 SqlCommand cmd = new SqlCommand();
                 cmd.Connection = conn;
-                cmd.CommandText = "SELECT TEXT_DLG_ID, DLG_ID, CARD_TITLE, CARD_TEXT FROM TBL_ANIMATION_DLG_TEXT WHERE DLG_ID = @dlgID AND USE_YN = 'Y' AND DLG_ID > 999";
+                cmd.CommandText = "SELECT TEXT_DLG_ID, DLG_ID, CARD_TITLE, CARD_TEXT FROM TBL_DLG_TEXT WHERE DLG_ID = @dlgID AND USE_YN = 'Y' AND DLG_ID > 999";
                 //cmd.CommandText = "SELECT TEXT_DLG_ID, DLG_ID, CARD_TITLE, CARD_TEXT FROM TBL_SECCS_DLG_TEXT WHERE DLG_ID = @dlgID AND USE_YN = 'Y' AND DLG_ID > 999";
 
                 cmd.Parameters.AddWithValue("@dlgID", dlgID);
@@ -412,7 +412,7 @@ namespace JuiceChatBot.DB
                 conn.Open();
                 SqlCommand cmd = new SqlCommand();
                 cmd.Connection = conn;
-                cmd.CommandText = "SELECT TEXT_DLG_ID, DLG_ID, CARD_TITLE,CARD_TEXT FROM TBL_ANIMATION_DLG_TEXT WHERE DLG_ID = (SELECT DLG_ID FROM TBL_ANIMATION_DLG WHERE DLG_GROUP = @dlgGroup) AND USE_YN = 'Y'";
+                cmd.CommandText = "SELECT TEXT_DLG_ID, DLG_ID, CARD_TITLE,CARD_TEXT FROM TBL_DLG_TEXT WHERE DLG_ID = (SELECT DLG_ID FROM TBL_DLG WHERE DLG_GROUP = @dlgGroup) AND USE_YN = 'Y'";
                 //cmd.CommandText = "SELECT TEXT_DLG_ID, DLG_ID, CARD_TITLE, CARD_TEXT FROM TBL_SECCS_DLG_TEXT WHERE DLG_ID = @dlgID AND USE_YN = 'Y' AND DLG_ID > 999";
 
                 cmd.Parameters.AddWithValue("@dlgGroup", dlgGroup);
@@ -454,7 +454,7 @@ namespace JuiceChatBot.DB
                 cmd.Connection = conn;
                 cmd.CommandText += " SELECT                                                                                                                                                         ";
                 cmd.CommandText += " TOP 1 TD.DLG_ID, (SELECT TOP 1 BANNED_WORD FROM TBL_BANNED_WORD_LIST WHERE CHARINDEX(BANNED_WORD, @msg) > 0) AS BANNED_WORD, TDT.CARD_TITLE, TDT.CARD_TEXT     ";
-                cmd.CommandText += " FROM TBL_ANIMATION_DLG TD, TBL_ANIMATION_DLG_TEXT TDT                                                                                                                              ";
+                cmd.CommandText += " FROM TBL_DLG TD, TBL_DLG_TEXT TDT                                                                                                                              ";
                 cmd.CommandText += " WHERE TD.DLG_ID = TDT.DLG_ID                                                                                                                                   ";
                 cmd.CommandText += " AND                                                                                                                                                            ";
                 cmd.CommandText += " 	TD.DLG_GROUP =                                                                                                                                              ";
@@ -529,7 +529,7 @@ namespace JuiceChatBot.DB
                 SqlCommand cmd = new SqlCommand();
                 cmd.Connection = conn;
                 cmd.CommandText += "SELECT LUIS_ID, LUIS_INTENT, LUIS_ENTITIES, ISNULL(DLG_ID,0) AS DLG_ID, DLG_API_DEFINE, API_ID ";
-                cmd.CommandText += "  FROM TBL_ANIMATION_DLG_RELATION_LUIS                                                    ";
+                cmd.CommandText += "  FROM TBL_DLG_RELATION_LUIS                                                    ";
                 cmd.CommandText += " WHERE 1=1                                               ";
                 //cmd.CommandText += " WHERE LUIS_INTENT = @intentId                                                 ";
                 cmd.CommandText += "   AND LUIS_ENTITIES = @entities                                                ";
@@ -587,7 +587,7 @@ namespace JuiceChatBot.DB
                 SqlCommand cmd = new SqlCommand();
                 cmd.Connection = conn;
                 cmd.CommandText += "SELECT  LUIS_ID, LUIS_INTENT, LUIS_ENTITIES, ISNULL(DLG_ID,0) AS DLG_ID, DLG_API_DEFINE, API_ID ";
-                cmd.CommandText += "  FROM  TBL_ANIMATION_DLG_RELATION_LUIS                                                    ";
+                cmd.CommandText += "  FROM  TBL_DLG_RELATION_LUIS                                                    ";
                 cmd.CommandText += " WHERE  LUIS_ENTITIES = @entities                                                ";
 
                 Debug.WriteLine("query : " + cmd.CommandText);
@@ -641,7 +641,7 @@ namespace JuiceChatBot.DB
                 SqlCommand cmd = new SqlCommand();
                 cmd.Connection = conn;
                 cmd.CommandText = " SELECT CNF_TYPE, CNF_NM, CNF_VALUE" +
-                                  " FROM TBL_ANIMATION_CHATBOT_CONF " +
+                                  " FROM TBL_CHATBOT_CONF " +
                                   //" WHERE CNF_TYPE = 'LUIS_APP_ID' " +
                                   " ORDER BY CNF_TYPE DESC, ORDER_NO ASC ";
 
