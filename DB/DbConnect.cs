@@ -1116,7 +1116,7 @@ namespace JuiceChatBot.DB
                 cmd.Connection = conn;
 
                 cmd.CommandText += "	SELECT ";
-                cmd.CommandText += "        ISNULL(CUSTOMER_COMMENT_KR, '') AS COMMENT ";
+                cmd.CommandText += "        TOP 1 ISNULL(CUSTOMER_COMMENT_KR, '') AS COMMENT ";
                 cmd.CommandText += "        FROM TBL_HISTORY_QUERY";
                 cmd.CommandText += " 	WHERE USER_NUMBER = '" + userNumber + "' AND CHATBOT_COMMENT_CODE = '" + chatbotCommentCode + "'";
                 cmd.CommandText += "    ORDER BY SID DESC";
