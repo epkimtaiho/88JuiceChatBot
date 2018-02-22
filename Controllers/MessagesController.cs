@@ -277,6 +277,7 @@ namespace JuiceChatBot
                     }
                     else
                     {
+                        Debug.WriteLine("* NO bannedMsg !");
                         queryStr = orgMent;
                         //인텐트 엔티티 검출
                         //캐시 체크
@@ -379,7 +380,7 @@ namespace JuiceChatBot
                         }
                         else
                         {
-
+                            DButil.HistoryLog("relationList is not NULL");
                             if (MessagesController.cacheList.luisIntent == null || apiFlag.Equals("COMMON"))
                             {
                                 apiFlag = "";
@@ -393,7 +394,7 @@ namespace JuiceChatBot
                         
                         if (apiFlag.Equals("COMMON") && relationList.Count > 0)
                         {
-
+                            DButil.HistoryLog("apiFlag : COMMON | relationList.Count : " + relationList.Count);
                             //context.Call(new CommonDialog("", MessagesController.queryStr), this.ResumeAfterOptionDialog);
                             String beforeMent = "";
                             facebookpagecount = 1;
@@ -414,6 +415,8 @@ namespace JuiceChatBot
                                 }
                             }
 
+
+                            DButil.HistoryLog("* MessagesController.relationList.Count : " + MessagesController.relationList.Count);
                             for (int m = 0; m < MessagesController.relationList.Count; m++)
                             {
                                 DialogList dlg = db.SelectDialog(MessagesController.relationList[m].dlgId);
@@ -468,7 +471,27 @@ namespace JuiceChatBot
                                 }
                                 else
                                 {
-                                    DButil.HistoryLog("facebook dlg.dlgId : " + dlg.dlgId);
+                                    DButil.HistoryLog("* facebook dlg.dlgId : " + dlg.dlgId);
+                                    DButil.HistoryLog("* activity.ChannelId : " + activity.ChannelId);
+                                    DButil.HistoryLog("* dlg.dlgId : "+ dlg.dlgId + " | dlg.cardText : " + dlg.cardText);
+
+                                    if (dlg.dlgId.Equals(24)) //  주문내역 dialog 일시..
+                                    {
+                                        DButil.HistoryLog("*** activity.Conversation.Id : " + activity.Conversation.Id + " | dlg.cardText : " + dlg.cardText);
+
+                                        string[] strComment = new string[3];
+                                        string optionComment = "";
+
+                                        strComment[0] = db.SelectUserHistoryComment(activity.Conversation.Id, "selectDiet");
+                                        strComment[1] = db.SelectUserHistoryComment(activity.Conversation.Id, "selectDelievery");
+                                        strComment[2] = db.SelectUserHistoryComment(activity.Conversation.Id, "order");
+                                        DButil.HistoryLog("*** strComment[0] : " + strComment[0] + " | strComment[1] : " + strComment[1] + " | strComment[2] : " + strComment[2]);
+
+                                        optionComment = strComment[0] + "/" + strComment[1] + "/" + strComment[2];
+                                        dlg.cardText = dlg.cardText.Replace("#OPTIONS", optionComment);
+
+                                    }
+
                                     if (activity.ChannelId.Equals("facebook") && string.IsNullOrEmpty(dlg.cardTitle) && dlg.dlgType.Equals(TEXTDLG))
                                     {
                                         commonReply.Recipient = activity.From;
@@ -487,6 +510,8 @@ namespace JuiceChatBot
 
                                 if (commonReply.Attachments.Count > 0)
                                 {
+                                    DButil.HistoryLog("* commonReply.Attachments.Count : " + commonReply.Attachments.Count);
+
                                     SetActivity(commonReply);
                                     conversationhistory.commonBeforeQustion = orgMent;
                                     replyresult = "H";
@@ -494,6 +519,8 @@ namespace JuiceChatBot
                                 }
                             }
                         }
+
+                        /*
                         else
                         {
                             string newUserID = activity.Conversation.Id;
@@ -715,6 +742,7 @@ namespace JuiceChatBot
                                 replyresult = "D";
                             }
                         }
+                        */
 
                         DateTime endTime = DateTime.Now;
                         //analysis table insert
@@ -724,6 +752,9 @@ namespace JuiceChatBot
 
                         //}
                         //history table insert
+
+                        Debug.WriteLine("* insertHistory | Conversation.Id : " + activity.Conversation.Id + "ChannelId : " + activity.ChannelId);
+
                         db.insertHistory(activity.Conversation.Id, activity.ChannelId, ((endTime - MessagesController.startTime).Milliseconds));
                         replyresult = "";
                         recommendResult = "";

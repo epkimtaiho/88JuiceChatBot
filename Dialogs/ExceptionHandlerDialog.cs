@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
 using System.Web;
+using System.Diagnostics;
 
 namespace JuiceChatBot.Dialogs
 {
@@ -51,6 +52,7 @@ namespace JuiceChatBot.Dialogs
         {
 
             var stackTrace = e.StackTrace;
+            //Debug.WriteLine("* stackTrace : "+ stackTrace);
             if (stackTrace.Length > _stackTraceLength)
                 stackTrace = stackTrace.Substring(0, _stackTraceLength) + "…";
             stackTrace = stackTrace.Replace(Environment.NewLine, "  \n");
@@ -60,6 +62,7 @@ namespace JuiceChatBot.Dialogs
             var exceptionStr = $"**{message}**  \n\n{stackTrace}";
 
             await context.PostAsync(exceptionStr).ConfigureAwait(false);
+
         }
     }
 }

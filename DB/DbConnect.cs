@@ -498,6 +498,17 @@ namespace JuiceChatBot.DB
 
                 cmd.Parameters.AddWithValue("@msg", orgMent);
                 rdr = cmd.ExecuteReader(CommandBehavior.CloseConnection);
+                
+                /*
+                if (rdr.Read())
+                {
+                    Debug.WriteLine("* YES - TBL_QUERY_ANALYSIS_RESULT");
+                }
+                else
+                {
+                    Debug.WriteLine("* NO - TBL_QUERY_ANALYSIS_RESULT");
+                }
+                */
 
                 while (rdr.Read())
                 {
@@ -506,12 +517,14 @@ namespace JuiceChatBot.DB
                     string entitiesId = rdr["LUIS_ENTITIES"] as String;
                     string luisScore = rdr["LUIS_INTENT_SCORE"] as String;
                     
-
                     result.luisId = luisId;
                     result.luisIntent = intentId;
                     result.luisEntities = entitiesId;
                     result.luisScore = luisScore;
+
+                    Debug.WriteLine("Yes rdr | intentId : " + intentId + " | entitiesId : "+ entitiesId + " | luisScore : " + luisScore);
                 }
+
             }
             return result;
         }
@@ -1089,5 +1102,41 @@ namespace JuiceChatBot.DB
                 return entityarr;
             }
         }
+
+        public String SelectUserHistoryComment(string userNumber, string chatbotCommentCode)
+        {
+            // userNumber, chatbotCommentCode
+            string resultComment = "";
+            SqlDataReader rdr = null;
+
+            using (SqlConnection conn = new SqlConnection(connStr))
+            {
+                conn.Open();
+                SqlCommand cmd = new SqlCommand();
+                cmd.Connection = conn;
+
+                cmd.CommandText += "	SELECT ";
+                cmd.CommandText += "        ISNULL(CUSTOMER_COMMENT_KR, '') AS COMMENT ";
+                cmd.CommandText += "        FROM TBL_HISTORY_QUERY";
+                cmd.CommandText += " 	WHERE USER_NUMBER = '" + userNumber + "' AND CHATBOT_COMMENT_CODE = '" + chatbotCommentCode + "'";
+                cmd.CommandText += "    ORDER BY SID DESC";
+                cmd.Parameters.AddWithValue("@userNumber", userNumber);
+                cmd.Parameters.AddWithValue("@chatbotCommentCode", chatbotCommentCode);
+
+                rdr = cmd.ExecuteReader(CommandBehavior.CloseConnection);
+
+                while (rdr.Read())
+                {
+                    resultComment = rdr["COMMENT"] as string;
+
+                }
+
+                //resultComment = newComment;
+            }
+
+            return resultComment;
+        }
+
+
     }
 }
