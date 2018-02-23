@@ -477,17 +477,18 @@ namespace JuiceChatBot
 
                                     if (dlg.dlgId.Equals(24)) //  주문내역 dialog 일시..
                                     {
-                                        DButil.HistoryLog("*** activity.Conversation.Id : " + activity.Conversation.Id + " | dlg.cardText : " + dlg.cardText);
+                                        DButil.HistoryLog("*** activity.Conversation.Id : " + activity.Conversation.Id + " | dlg.cardText : " + dlg.cardText + " | fullentity : " + fullentity); 
 
                                         string[] strComment = new string[3];
                                         string optionComment = "";
 
                                         strComment[0] = db.SelectUserHistoryComment(activity.Conversation.Id, "selectDiet");
                                         strComment[1] = db.SelectUserHistoryComment(activity.Conversation.Id, "selectDelievery");
-                                        strComment[2] = db.SelectUserHistoryComment(activity.Conversation.Id, "order");
+                                        //strComment[2] = db.SelectUserHistoryComment(activity.Conversation.Id, "order");
                                         DButil.HistoryLog("*** strComment[0] : " + strComment[0] + " | strComment[1] : " + strComment[1] + " | strComment[2] : " + strComment[2]);
 
-                                        optionComment = strComment[0] + "/" + strComment[1] + "/" + strComment[2];
+                                        //optionComment = strComment[0] + "/" + strComment[1] + "/" + strComment[2];
+                                        optionComment = strComment[0] + "/" + strComment[1] + "/" + fullentity;
                                         dlg.cardText = dlg.cardText.Replace("#OPTIONS", optionComment);
 
                                     }
